@@ -1,0 +1,64 @@
+// Analytics ingest schema. Multi-app event tracking + session duration.
+// Prisma 7 — datasource url resolved from prisma.config.ts (CLI) and
+// PrismaClient datasourceUrl (runtime). See lib/prisma.ts.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// One row per tracked app. apiKey authenticates ingest requests.
+model App {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  apiKey    String   @unique
+  createdAt DateTime @default(now())
+
+  events   Event[]
+  sessions Session[]
+
+  @@map("apps")
+}
+
+// One row per tracked event (first_open, video_exported, ...).
+// Extra request params land in `props` (JSON).
+model Event {
+  id        String   @id @default(cuid())
+  appId     String
+  name      String
+  uid       String? // anonymous client-generated user id
+  sessionId String? // links event to a Session
+  props     Json? // arbitrary event properties
+  ts        DateTime @default(now()) // server receive time
+  clientTs  DateTime? // optional client-supplied timestamp
+
+  app App @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@index([appId, name, ts])
+  @@index([appId, uid])
+  @@index([appId, ts])
+  @@map("events")
+}
+
+// Session duration via heartbeat. Upserted by (appId, sessionId).
+// duration = lastSeenAt - startedAt.
+model Session {
+  id        String   @id @default(cuid())
+  appId     String
+  sessionId String // client-generated session id
+  uid       String?
+  startedAt DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  pings     Int      @default(1)
+
+  app App @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@unique([appId, sessionId])
+  @@index([appId, startedAt])
+  @@map("sessions")
+}
