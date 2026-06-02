@@ -117,6 +117,21 @@ Response: `{ "ok": true, "durationMs": 161000, "pings": 9 }`
 
 Reserved keys (not stored as props): `key, apikey, event, e, uid, session, sid, ts, clientTs`.
 
+### Geo props (recommended)
+Send these as props so the dashboard can break down by country/language/timezone:
+
+| Prop | Format | Example | How to get it |
+|---|---|---|---|
+| `country` | ISO 3166-1 alpha-2 | `US` | IP geo, locale region, or store country |
+| `lang` | BCP-47 / ISO 639 | `en` | device/browser language |
+| `tz` | IANA timezone | `America/New_York` | `Intl.DateTimeFormat().resolvedOptions().timeZone` |
+
+```
+GET /api/e?key=APP_KEY&event=app_open&uid=UID&session=SID&country=US&tz=America%2FNew_York&lang=en
+```
+Send them on `app_open` (at least). The dashboard shows top countries, top languages,
+a per-user flag, and the user's latest country/lang/tz. URL-encode `tz` (the `/`).
+
 ---
 
 ## 6. Auth — three ways to send the key

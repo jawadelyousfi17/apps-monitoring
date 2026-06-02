@@ -48,73 +48,58 @@ export default function AdminApps({
     return data;
   }
 
-  function refresh() {
-    start(() => router.refresh());
-  }
-
-  function create(e: React.FormEvent) {
-    e.preventDefault();
+  function run(fn: () => Promise<void>) {
     setError(null);
-    const finalSlug = slug || slugify(name);
     start(async () => {
       try {
-        await api("", "POST", { name, slug: finalSlug });
-        setName("");
-        setSlug("");
-        setSlugTouched(false);
+        await fn();
         router.refresh();
       } catch (err) {
         setError((err as Error).message);
       }
+    });
+  }
+
+  function create(e: React.FormEvent) {
+    e.preventDefault();
+    const finalSlug = slug || slugify(name);
+    run(async () => {
+      await api("", "POST", { name, slug: finalSlug });
+      setName("");
+      setSlug("");
+      setSlugTouched(false);
     });
   }
 
   function regenerate(id: string) {
     if (!confirm("Regenerate key? Old key stops working immediately.")) return;
-    start(async () => {
-      try {
-        await api(`/${id}`, "PATCH", { regenerateKey: true });
-        router.refresh();
-      } catch (err) {
-        setError((err as Error).message);
-      }
-    });
+    run(() => api(`/${id}`, "PATCH", { regenerateKey: true }).then(() => {}));
   }
 
   function rename(id: string, current: string) {
     const next = prompt("New name", current);
     if (!next || next.trim() === current) return;
-    start(async () => {
-      try {
-        await api(`/${id}`, "PATCH", { name: next.trim() });
-        router.refresh();
-      } catch (err) {
-        setError((err as Error).message);
-      }
-    });
+    run(() => api(`/${id}`, "PATCH", { name: next.trim() }).then(() => {}));
   }
 
   function remove(id: string, appName: string) {
     if (!confirm(`Delete "${appName}" and ALL its events/sessions? Cannot undo.`))
       return;
-    start(async () => {
-      try {
-        await api(`/${id}`, "DELETE");
-        router.refresh();
-      } catch (err) {
-        setError((err as Error).message);
-      }
-    });
+    run(() => api(`/${id}`, "DELETE").then(() => {}));
   }
+
+  const inputCls =
+    "rounded-xl border border-line bg-panel-2 px-3.5 py-2.5 text-sm outline-none transition focus:border-violet/40 focus:bg-panel focus:ring-4 focus:ring-violet/10";
 
   return (
     <div className={pending ? "opacity-60 transition-opacity" : "transition-opacity"}>
+      {/* create */}
       <form
         onSubmit={create}
-        className="flex flex-col gap-3 rounded-xl border border-neutral-200 p-4 sm:flex-row sm:items-end dark:border-neutral-800"
+        className="card flex flex-col gap-3 p-4 sm:flex-row sm:items-end"
       >
-        <label className="flex flex-1 flex-col gap-1">
-          <span className="text-xs font-medium text-neutral-500">App name</span>
+        <label className="flex flex-1 flex-col gap-1.5">
+          <span className="text-xs font-semibold text-ink-soft">App name</span>
           <input
             value={name}
             onChange={(e) => {
@@ -123,11 +108,11 @@ export default function AdminApps({
             }}
             placeholder="Video Editor"
             required
-            className="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700"
+            className={inputCls}
           />
         </label>
-        <label className="flex flex-1 flex-col gap-1">
-          <span className="text-xs font-medium text-neutral-500">Slug</span>
+        <label className="flex flex-1 flex-col gap-1.5">
+          <span className="text-xs font-semibold text-ink-soft">Slug</span>
           <input
             value={slug}
             onChange={(e) => {
@@ -136,27 +121,32 @@ export default function AdminApps({
             }}
             placeholder="video-editor"
             required
-            className="rounded-md border border-neutral-300 bg-transparent px-3 py-2 font-mono text-sm outline-none focus:border-neutral-500 dark:border-neutral-700"
+            className={`${inputCls} font-mono`}
           />
         </label>
         <button
           type="submit"
           disabled={pending || !name}
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"
+          className="rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-95 disabled:opacity-50"
+          style={{ background: "linear-gradient(135deg, var(--violet), var(--fuchsia))" }}
         >
-          Create app
+          + Create app
         </button>
       </form>
 
       {error && (
-        <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">
+        <p
+          className="mt-3 rounded-xl px-3.5 py-2.5 text-sm font-medium"
+          style={{ color: "var(--red)", background: "var(--red-bg)" }}
+        >
           {error}
         </p>
       )}
 
-      <div className="mt-6 grid gap-3">
+      {/* app cards */}
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
         {apps.map((a) => (
-          <AppRow
+          <AppCard
             key={a.id}
             app={a}
             token={token}
@@ -166,14 +156,14 @@ export default function AdminApps({
           />
         ))}
         {apps.length === 0 && (
-          <p className="text-sm text-neutral-500">No apps yet. Create one above.</p>
+          <p className="text-sm text-ink-mute">No apps yet. Create one above.</p>
         )}
       </div>
     </div>
   );
 }
 
-function AppRow({
+function AppCard({
   app,
   token,
   onRename,
@@ -196,58 +186,77 @@ function AppRow({
     });
   }
 
-  const masked = app.apiKey.slice(0, 8) + "…" + app.apiKey.slice(-4);
+  const masked = app.apiKey.slice(0, 10) + "…" + app.apiKey.slice(-4);
+  const initial = app.name.charAt(0).toUpperCase();
+  const btn =
+    "rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium text-ink-soft transition hover:bg-ink/[0.04] hover:text-ink";
 
   return (
-    <div className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="font-medium">{app.name}</div>
-          <div className="font-mono text-xs text-neutral-400">
-            {app.slug} · {app.eventCount.toLocaleString()} events
+    <div className="card flex flex-col p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span
+            className="grid h-10 w-10 place-items-center rounded-xl font-display text-base font-bold text-white"
+            style={{ background: "linear-gradient(135deg, var(--violet), var(--fuchsia))" }}
+          >
+            {initial}
+          </span>
+          <div>
+            <Link
+              href={`/apps/${app.slug}?token=${token}`}
+              className="font-display font-bold tracking-tight hover:underline"
+            >
+              {app.name}
+            </Link>
+            <div className="font-mono text-xs text-ink-mute">{app.slug}</div>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2 text-sm">
-          <Link
-            href={`/apps/${app.slug}?token=${token}`}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Analytics
-          </Link>
-          <button
-            onClick={onRename}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Rename
-          </button>
-          <button
-            onClick={onRegenerate}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Regenerate key
-          </button>
-          <button
-            onClick={onRemove}
-            className="rounded-md border border-red-300 px-3 py-1.5 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40"
-          >
-            Delete
-          </button>
+        <div className="text-right">
+          <div className="font-display text-xl font-bold tabular-nums">
+            {app.eventCount.toLocaleString()}
+          </div>
+          <div className="text-[11px] text-ink-mute">events</div>
         </div>
       </div>
 
-      <div className="mt-3 flex items-center gap-2 rounded-md bg-neutral-100 px-3 py-2 font-mono text-xs dark:bg-neutral-900">
-        <span className="flex-1 truncate">{revealed ? app.apiKey : masked}</span>
+      <div className="mt-4 flex items-center gap-2 rounded-xl bg-panel-2 px-3 py-2 font-mono text-xs">
+        <span className="flex-1 truncate text-ink-soft">
+          {revealed ? app.apiKey : masked}
+        </span>
         <button
           onClick={() => setRevealed((v) => !v)}
-          className="shrink-0 text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
+          className="shrink-0 font-sans font-medium text-ink-mute hover:text-ink"
         >
           {revealed ? "Hide" : "Reveal"}
         </button>
         <button
           onClick={copy}
-          className="shrink-0 text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
+          className="shrink-0 font-sans font-medium text-violet hover:opacity-80"
         >
           {copied ? "Copied!" : "Copy"}
+        </button>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Link
+          href={`/apps/${app.slug}?token=${token}`}
+          className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-white"
+          style={{ background: "var(--ink)" }}
+        >
+          Analytics →
+        </Link>
+        <button onClick={onRename} className={btn}>
+          Rename
+        </button>
+        <button onClick={onRegenerate} className={btn}>
+          Regenerate key
+        </button>
+        <button
+          onClick={onRemove}
+          className="rounded-lg border px-2.5 py-1.5 text-xs font-medium transition"
+          style={{ borderColor: "var(--red-bg)", color: "var(--red)" }}
+        >
+          Delete
         </button>
       </div>
     </div>
