@@ -7,6 +7,7 @@ import {
   listAppUsers,
   listAppsWithCounts,
   listAppGeo,
+  parseDevice,
 } from "@/lib/stats";
 import { fmtDuration, flagEmoji, countryName, langName } from "@/lib/format";
 import { Shell, Crumb } from "@/app/_components/Shell";
@@ -20,9 +21,12 @@ export default async function AppPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ token?: string }>;
+  searchParams: Promise<{ token?: string; device?: string }>;
 }) {
-  const [{ slug }, { token }] = await Promise.all([params, searchParams]);
+  const [{ slug }, { token, device: deviceParam }] = await Promise.all([
+    params,
+    searchParams,
+  ]);
   const ok = adminTokens().length > 0 && !!token && adminTokens().includes(token);
   if (!ok) {
     return (
@@ -35,11 +39,12 @@ export default async function AppPage({
   const app = await prisma.app.findUnique({ where: { slug } });
   if (!app) notFound();
 
+  const device = parseDevice(deviceParam);
   const [stats, users, apps, geo] = await Promise.all([
-    getAppStats(app.id, new Date()),
-    listAppUsers(app.id, 100),
+    getAppStats(app.id, new Date(), device),
+    listAppUsers(app.id, 100, device),
     listAppsWithCounts(),
-    listAppGeo(app.id),
+    listAppGeo(app.id, device),
   ]);
   const hasGeo = geo.countries.length > 0 || geo.languages.length > 0;
 
@@ -61,6 +66,35 @@ export default async function AppPage({
         <p className="mt-1 font-mono text-xs text-ink-mute">
           {app.slug} · total events
         </p>
+
+        {/* device filter: both / iOS / Android */}
+        <div className="mt-5 inline-flex rounded-full border border-line p-1 text-sm">
+          {(
+            [
+              ["all", "Both"],
+              ["ios", "iOS"],
+              ["android", "Android"],
+            ] as const
+          ).map(([val, label]) => {
+            const qs = new URLSearchParams({ token: token! });
+            if (val !== "all") qs.set("device", val);
+            const activeTab = device === val;
+            return (
+              <Link
+                key={val}
+                href={`/apps/${app.slug}?${qs.toString()}`}
+                className={
+                  "rounded-full px-4 py-1.5 font-medium transition " +
+                  (activeTab
+                    ? "bg-violet text-white"
+                    : "text-ink-soft hover:text-ink")
+                }
+              >
+                {label}
+              </Link>
+            );
+          })}
+        </div>
 
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
