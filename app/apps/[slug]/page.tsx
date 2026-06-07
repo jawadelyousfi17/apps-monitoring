@@ -8,25 +8,46 @@ import {
   listAppsWithCounts,
   listAppGeo,
   parseDevice,
+  parseUserSort,
+  parseSortDir,
+  type UserSort,
+  type SortDir,
 } from "@/lib/stats";
-import { fmtDuration, flagEmoji, countryName, langName } from "@/lib/format";
+import {
+  fmtDuration,
+  fmtRelative,
+  flagEmoji,
+  countryName,
+  langName,
+} from "@/lib/format";
 import { Shell, Crumb } from "@/app/_components/Shell";
 import { StatCard } from "@/app/_components/StatCard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const SORT_LABELS: Record<UserSort, string> = {
+  events: "events",
+  sessions: "sessions",
+  time: "time in app",
+  first: "first seen",
+  last: "last seen",
+};
+
 export default async function AppPage({
   params,
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ token?: string; device?: string }>;
+  searchParams: Promise<{
+    token?: string;
+    device?: string;
+    sort?: string;
+    dir?: string;
+  }>;
 }) {
-  const [{ slug }, { token, device: deviceParam }] = await Promise.all([
-    params,
-    searchParams,
-  ]);
+  const [{ slug }, { token, device: deviceParam, sort: sortParam, dir: dirParam }] =
+    await Promise.all([params, searchParams]);
   const ok = adminTokens().length > 0 && !!token && adminTokens().includes(token);
   if (!ok) {
     return (
@@ -40,9 +61,12 @@ export default async function AppPage({
   if (!app) notFound();
 
   const device = parseDevice(deviceParam);
+  const sort = parseUserSort(sortParam);
+  const dir = parseSortDir(dirParam);
+  const now = new Date();
   const [stats, users, apps, geo] = await Promise.all([
-    getAppStats(app.id, new Date(), device),
-    listAppUsers(app.id, 100, device),
+    getAppStats(app.id, now, device),
+    listAppUsers(app.id, 100, device, sort, dir),
     listAppsWithCounts(),
     listAppGeo(app.id, device),
   ]);
@@ -50,6 +74,20 @@ export default async function AppPage({
 
   const series = stats.daily.map((d) => d.count);
   const maxDaily = Math.max(1, ...series);
+  const topEventTotal = stats.topEvents.reduce((s, e) => s + e.count, 0);
+
+  // Build a users-table URL that preserves token + device and toggles sort.
+  // Clicking the active column flips direction; a new column starts descending.
+  const sortHref = (col: UserSort): string => {
+    const qs = new URLSearchParams({ token: token! });
+    if (device !== "all") qs.set("device", device);
+    qs.set("sort", col);
+    const nextDir: SortDir = sort === col && dir === "desc" ? "asc" : "desc";
+    qs.set("dir", nextDir);
+    return `/apps/${app.slug}?${qs.toString()}#users`;
+  };
+  const sortArrow = (col: UserSort): string =>
+    sort === col ? (dir === "asc" ? "↑" : "↓") : "";
 
   return (
     <Shell
@@ -177,12 +215,16 @@ export default async function AppPage({
             <div className="mt-4 space-y-3">
               {stats.topEvents.map((e) => {
                 const max = Math.max(1, ...stats.topEvents.map((x) => x.count));
+                const share = topEventTotal
+                  ? Math.round((e.count / topEventTotal) * 100)
+                  : 0;
                 return (
                   <div key={e.name}>
-                    <div className="flex justify-between text-sm">
+                    <div className="flex items-baseline justify-between text-sm">
                       <span className="font-mono text-xs">{e.name}</span>
                       <span className="tabular-nums text-ink-soft">
                         {e.count.toLocaleString()}
+                        <span className="ml-1.5 text-xs text-ink-mute">{share}%</span>
                       </span>
                     </div>
                     <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
@@ -292,50 +334,95 @@ export default async function AppPage({
         )}
 
         {/* users */}
-        <section className="card mt-6 overflow-hidden">
-          <div className="flex items-center justify-between border-b border-line px-5 py-4">
-            <h2 className="font-display font-bold">Users</h2>
-            <span className="text-xs text-ink-mute">top {users.length} by events</span>
+        <section id="users" className="card mt-6 overflow-hidden scroll-mt-6">
+          <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-4">
+            <div>
+              <h2 className="font-display font-bold">Users</h2>
+              <p className="mt-0.5 text-xs text-ink-mute">
+                {users.length.toLocaleString()} shown · sorted by{" "}
+                <span className="text-ink-soft">{SORT_LABELS[sort]}</span> (
+                {dir === "asc" ? "ascending" : "descending"})
+              </p>
+            </div>
+            <span className="hidden text-xs text-ink-mute sm:inline">
+              click a column to sort
+            </span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wider text-ink-mute">
-                  <th className="px-5 py-3 font-semibold">User</th>
-                  <th className="px-5 py-3 text-right font-semibold">Events</th>
-                  <th className="px-5 py-3 text-right font-semibold">Sessions</th>
-                  <th className="px-5 py-3 text-right font-semibold">Time</th>
-                  <th className="px-5 py-3 text-right font-semibold">Last seen</th>
+                <tr className="border-b border-line text-[11px] uppercase tracking-wider text-ink-mute">
+                  <th className="px-5 py-3 text-left font-semibold">User</th>
+                  {(
+                    [
+                      ["events", "Events"],
+                      ["sessions", "Sessions"],
+                      ["time", "Time"],
+                      ["first", "First seen"],
+                      ["last", "Last seen"],
+                    ] as const
+                  ).map(([col, label]) => {
+                    const isActive = sort === col;
+                    return (
+                      <th key={col} className="px-5 py-3 text-right font-semibold">
+                        <Link
+                          href={sortHref(col)}
+                          scroll={false}
+                          className={
+                            "inline-flex items-center gap-1 transition hover:text-ink " +
+                            (isActive ? "text-violet" : "")
+                          }
+                        >
+                          {label}
+                          <span className="w-2 text-[10px]">{sortArrow(col)}</span>
+                        </Link>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody className="divide-y divide-line-soft">
-                {users.map((u) => (
-                  <tr key={u.uid} className="transition hover:bg-ink/[0.02]">
+                {users.map((u, i) => (
+                  <tr key={u.uid} className="group transition hover:bg-ink/[0.025]">
                     <td className="px-5 py-3">
-                      <Link
-                        href={`/apps/${app.slug}/users/${encodeURIComponent(u.uid)}?token=${token}`}
-                        className="flex items-center gap-2 font-mono text-xs text-violet hover:underline"
-                      >
-                        <span
-                          className="text-sm leading-none"
-                          title={u.country ? countryName(u.country) : "Unknown"}
-                        >
-                          {flagEmoji(u.country)}
+                      <div className="flex items-center gap-3">
+                        <span className="w-5 shrink-0 text-right font-mono text-[11px] tabular-nums text-ink-mute">
+                          {i + 1}
                         </span>
-                        {u.uid.length > 26 ? u.uid.slice(0, 26) + "…" : u.uid}
-                      </Link>
+                        <Link
+                          href={`/apps/${app.slug}/users/${encodeURIComponent(u.uid)}?token=${token}`}
+                          className="flex items-center gap-2 font-mono text-xs text-violet group-hover:underline"
+                        >
+                          <span
+                            className="text-sm leading-none"
+                            title={u.country ? countryName(u.country) : "Unknown"}
+                          >
+                            {flagEmoji(u.country)}
+                          </span>
+                          {u.uid.length > 26 ? u.uid.slice(0, 26) + "…" : u.uid}
+                        </Link>
+                      </div>
                     </td>
-                    <td className="px-5 py-3 text-right tabular-nums font-medium">
+                    <td className="px-5 py-3 text-right font-medium tabular-nums">
                       {u.events.toLocaleString()}
                     </td>
                     <td className="px-5 py-3 text-right tabular-nums text-ink-soft">
-                      {u.sessions}
+                      {u.sessions.toLocaleString()}
                     </td>
                     <td className="px-5 py-3 text-right tabular-nums text-ink-soft">
                       {fmtDuration(u.totalSec)}
                     </td>
-                    <td className="px-5 py-3 text-right text-xs text-ink-mute">
-                      {u.lastSeen.slice(0, 10)}
+                    <td
+                      className="px-5 py-3 text-right text-xs text-ink-mute"
+                      title={u.firstSeen.slice(0, 10)}
+                    >
+                      {fmtRelative(u.firstSeen, now)}
+                    </td>
+                    <td
+                      className="px-5 py-3 text-right text-xs text-ink-soft"
+                      title={u.lastSeen.slice(0, 10)}
+                    >
+                      {fmtRelative(u.lastSeen, now)}
                     </td>
                   </tr>
                 ))}

@@ -168,14 +168,44 @@ export type AppUser = {
   country: string | null;
 };
 
-// Per-user roll-up for an app, ranked by event count.
+// Columns the users table can be ordered by.
+export type UserSort = "events" | "sessions" | "time" | "first" | "last";
+export type SortDir = "asc" | "desc";
+
+export function parseUserSort(v: string | undefined): UserSort {
+  return v === "sessions" || v === "time" || v === "first" || v === "last"
+    ? v
+    : "events";
+}
+export function parseSortDir(v: string | undefined): SortDir {
+  return v === "asc" ? "asc" : "desc";
+}
+
+// Per-user roll-up for an app. `sort`/`dir` order the result; for event-table
+// columns (events/first/last) the SQL also orders candidate selection so the
+// top-N cutoff is exact. sessions/time sort in JS over the events-ranked
+// candidate set (session totals live in a separate table).
 export async function listAppUsers(
   appId: string,
   limit = 100,
   device: Device = "all",
+  sort: UserSort = "events",
+  dir: SortDir = "desc",
 ): Promise<AppUser[]> {
   const ev = eventDeviceCond(device);
   const ses = sessionDeviceCond(device);
+
+  // SQL ORDER for candidate selection. sessions/time aren't on the events
+  // table, so fall back to events DESC to pick a sensible top-N candidate set.
+  const sqlOrder: Prisma.Sql =
+    sort === "first"
+      ? Prisma.sql`MIN(ts) ${dir === "asc" ? Prisma.sql`ASC` : Prisma.sql`DESC`}`
+      : sort === "last"
+        ? Prisma.sql`MAX(ts) ${dir === "asc" ? Prisma.sql`ASC` : Prisma.sql`DESC`}`
+        : sort === "events"
+          ? Prisma.sql`events ${dir === "asc" ? Prisma.sql`ASC` : Prisma.sql`DESC`}`
+          : Prisma.sql`events DESC`;
+
   const [evRows, sessRows] = await Promise.all([
     prisma.$queryRaw<
       { uid: string; events: bigint; first: Date; last: Date; country: string | null }[]
@@ -185,7 +215,7 @@ export async function listAppUsers(
            FILTER (WHERE props->>'country' IS NOT NULL))[1] AS country
       FROM events
       WHERE "appId" = ${appId} AND uid IS NOT NULL ${ev}
-      GROUP BY uid ORDER BY events DESC LIMIT ${limit}`,
+      GROUP BY uid ORDER BY ${sqlOrder} LIMIT ${limit}`,
     prisma.$queryRaw<{ uid: string; sessions: bigint; sec: number | null }[]>`
       SELECT uid, COUNT(*) AS sessions,
              SUM(EXTRACT(EPOCH FROM ("lastSeenAt" - "startedAt"))) AS sec
@@ -198,7 +228,7 @@ export async function listAppUsers(
     sessRows.map((r) => [r.uid, { sessions: Number(r.sessions), sec: Number(r.sec ?? 0) }]),
   );
 
-  return evRows.map((r) => {
+  const users = evRows.map((r) => {
     const s = sessMap.get(r.uid);
     return {
       uid: r.uid,
@@ -210,6 +240,26 @@ export async function listAppUsers(
       country: r.country ?? null,
     };
   });
+
+  // Final ordering. SQL already covers events/first/last; sessions/time need a
+  // JS pass. Sort everything here so display order is consistent.
+  const keyOf = (u: AppUser): number => {
+    switch (sort) {
+      case "sessions":
+        return u.sessions;
+      case "time":
+        return u.totalSec;
+      case "first":
+        return Date.parse(u.firstSeen);
+      case "last":
+        return Date.parse(u.lastSeen);
+      default:
+        return u.events;
+    }
+  };
+  const mul = dir === "asc" ? 1 : -1;
+  users.sort((a, b) => (keyOf(a) - keyOf(b)) * mul);
+  return users;
 }
 
 export type GeoRow = { code: string; users: number; events: number };
