@@ -16,8 +16,9 @@ model App {
   id        String   @id @default(cuid())
   name      String
   slug      String   @unique
-  apiKey    String   @unique
-  createdAt DateTime @default(now())
+  apiKey         String   @unique
+  customResponse Json?
+  createdAt      DateTime @default(now())
 
   events   Event[]
   sessions Session[]

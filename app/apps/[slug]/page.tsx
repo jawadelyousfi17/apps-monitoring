@@ -22,6 +22,8 @@ import {
 } from "@/lib/format";
 import { Shell, Crumb } from "@/app/_components/Shell";
 import { StatCard } from "@/app/_components/StatCard";
+import CustomResponseEditor from "@/app/_components/CustomResponseEditor";
+import { sanitizeCustomResponse } from "@/lib/custom-response";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -436,6 +438,15 @@ export default async function AppPage({
             )}
           </div>
         </section>
+
+        {/* custom response / remote config */}
+        <CustomResponseEditor
+          appId={app.id}
+          appSlug={app.slug}
+          apiKey={app.apiKey}
+          initialFields={sanitizeCustomResponse(app.customResponse)}
+          token={token!}
+        />
       </div>
     </Shell>
   );

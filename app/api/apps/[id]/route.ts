@@ -1,11 +1,13 @@
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { generateApiKey, isAdmin } from "@/lib/auth";
+import { sanitizeCustomResponse } from "@/lib/custom-response";
+import type { Prisma } from "@/app/generated/prisma/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// PATCH /api/apps/:id?token=...  body: { name?, regenerateKey? } (admin)
+// PATCH /api/apps/:id?token=...  body: { name?, regenerateKey?, customResponse? } (admin)
 export async function PATCH(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
@@ -15,18 +17,32 @@ export async function PATCH(
   }
   const { id } = await ctx.params;
 
-  let body: { name?: string; regenerateKey?: boolean };
+  let body: {
+    name?: string;
+    regenerateKey?: boolean;
+    customResponse?: unknown;
+  };
   try {
     body = await req.json();
   } catch {
     return Response.json({ ok: false, error: "invalid json" }, { status: 400 });
   }
 
-  const data: { name?: string; apiKey?: string } = {};
+  const data: {
+    name?: string;
+    apiKey?: string;
+    customResponse?: Prisma.InputJsonValue;
+  } = {};
+
   if (typeof body.name === "string" && body.name.trim()) {
     data.name = body.name.trim();
   }
   if (body.regenerateKey) data.apiKey = generateApiKey();
+  if (body.customResponse !== undefined) {
+    data.customResponse = sanitizeCustomResponse(
+      body.customResponse,
+    ) as unknown as Prisma.InputJsonValue;
+  }
 
   if (Object.keys(data).length === 0) {
     return Response.json({ ok: false, error: "nothing to update" }, { status: 400 });

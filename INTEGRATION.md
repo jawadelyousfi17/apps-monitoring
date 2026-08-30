@@ -102,6 +102,33 @@ Response: `{ "ok": true, "durationMs": 161000, "pings": 9 }`
 > Session duration = time between first and last heartbeat for that `sid`.
 > Stop sending heartbeats when the app goes to background; resume on foreground.
 
+### 4.5 Custom App Response / Remote Config — `GET /api/config`
+Fetch custom dynamic fields configured in the dashboard for this app (types: `text`, `bool`, `number`, `json`).
+
+```
+GET /api/config?key=APP_KEY
+```
+Response:
+```json
+{
+  "ok": true,
+  "app": "Video Editor",
+  "slug": "video-editor",
+  "data": {
+    "is_pro_enabled": true,
+    "maintenance_mode": false,
+    "banner_text": "50% off holiday discount!",
+    "max_export_duration": 60
+  },
+  "fields": [
+    { "key": "is_pro_enabled", "type": "bool", "value": true },
+    { "key": "maintenance_mode", "type": "bool", "value": false },
+    { "key": "banner_text", "type": "text", "value": "50% off holiday discount!" },
+    { "key": "max_export_duration", "type": "number", "value": 60 }
+  ]
+}
+```
+
 ---
 
 ## 5. Field reference
