@@ -42,13 +42,16 @@ export type AppStats = {
   events7d: number;
   dau: number; // distinct uid in last 24h
   mau: number; // distinct uid in last 30d
+  todayUsers: number; // distinct uid today (00:00 UTC)
+  monthUsers: number; // distinct uid this calendar month
   totalUsers: number; // distinct uid all-time
   avgEventsPerUser: number | null;
   avgSessionsPerUser: number | null;
   sessions24h: number;
   avgSessionSec: number | null;
   topEvents: { name: string; count: number }[];
-  daily: { day: string; count: number }[]; // last 14 days
+  dailyUsers: { day: string; count: number; dateFormatted: string; weekday: string }[]; // unique users per day (last 14 days)
+  daily: { day: string; count: number; dateFormatted: string; weekday: string }[]; // last 14 days
 };
 
 export async function getAppStats(
@@ -60,6 +63,8 @@ export async function getAppStats(
   const since7d = new Date(now.getTime() - 7 * DAY);
   const since30d = new Date(now.getTime() - 30 * DAY);
   const since14d = new Date(now.getTime() - 14 * DAY);
+  const startOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const ev = eventDeviceCond(device);
   const ses = sessionDeviceCond(device);
 
@@ -71,8 +76,10 @@ export async function getAppStats(
     topRaw,
     dauRows,
     mauRows,
+    todayUsersRows,
+    monthUsersRows,
     avgRows,
-    dailyRows,
+    dailyUsersRows,
     totalUsersRows,
     totalSessionsRows,
     eventsWithUidRows,
@@ -99,12 +106,18 @@ export async function getAppStats(
     prisma.$queryRaw<{ c: bigint }[]>`
       SELECT COUNT(DISTINCT uid) AS c FROM events
       WHERE "appId" = ${appId} AND uid IS NOT NULL AND ts >= ${since30d} ${ev}`,
+    prisma.$queryRaw<{ c: bigint }[]>`
+      SELECT COUNT(DISTINCT uid) AS c FROM events
+      WHERE "appId" = ${appId} AND uid IS NOT NULL AND ts >= ${startOfToday} ${ev}`,
+    prisma.$queryRaw<{ c: bigint }[]>`
+      SELECT COUNT(DISTINCT uid) AS c FROM events
+      WHERE "appId" = ${appId} AND uid IS NOT NULL AND ts >= ${startOfMonth} ${ev}`,
     prisma.$queryRaw<{ avg: number | null }[]>`
       SELECT AVG(EXTRACT(EPOCH FROM ("lastSeenAt" - "startedAt"))) AS avg
       FROM sessions WHERE "appId" = ${appId} ${ses}`,
     prisma.$queryRaw<{ day: Date; c: bigint }[]>`
-      SELECT date_trunc('day', ts) AS day, COUNT(*) AS c FROM events
-      WHERE "appId" = ${appId} AND ts >= ${since14d} ${ev}
+      SELECT date_trunc('day', ts) AS day, COUNT(DISTINCT uid) AS c FROM events
+      WHERE "appId" = ${appId} AND uid IS NOT NULL AND ts >= ${since14d} ${ev}
       GROUP BY 1 ORDER BY 1`,
     prisma.$queryRaw<{ c: bigint }[]>`
       SELECT COUNT(DISTINCT uid) AS c FROM events
@@ -121,6 +134,7 @@ export async function getAppStats(
   const totalSessions = Number(totalSessionsRows[0]?.c ?? 0);
   // Events with a uid only — anonymous (uid-less) events excluded from per-user avg.
   const eventsWithUid = Number(eventsWithUidRows[0]?.c ?? 0);
+  const dailyUsers = fill14Days(dailyUsersRows, now);
 
   return {
     totalEvents: Number(totalRows[0]?.c ?? 0),
@@ -129,12 +143,15 @@ export async function getAppStats(
     sessions24h: Number(sessions24hRows[0]?.c ?? 0),
     dau: Number(dauRows[0]?.c ?? 0),
     mau: Number(mauRows[0]?.c ?? 0),
+    todayUsers: Number(todayUsersRows[0]?.c ?? 0),
+    monthUsers: Number(monthUsersRows[0]?.c ?? 0),
     totalUsers,
     avgEventsPerUser: totalUsers ? round1(eventsWithUid / totalUsers) : null,
     avgSessionsPerUser: totalUsers ? round1(totalSessions / totalUsers) : null,
     avgSessionSec: avgRows[0]?.avg != null ? Math.round(avgRows[0].avg) : null,
     topEvents: topRaw.map((r) => ({ name: r.name, count: Number(r.c) })),
-    daily: fill14Days(dailyRows, now),
+    dailyUsers,
+    daily: dailyUsers,
   };
 }
 
@@ -142,14 +159,35 @@ export async function getAppStats(
 function fill14Days(
   rows: { day: Date; c: bigint }[],
   now: Date,
-): { day: string; count: number }[] {
+): { day: string; count: number; dateFormatted: string; weekday: string }[] {
   const byDay = new Map(
     rows.map((r) => [r.day.toISOString().slice(0, 10), Number(r.c)]),
   );
-  const out: { day: string; count: number }[] = [];
+  const out: { day: string; count: number; dateFormatted: string; weekday: string }[] = [];
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
   for (let i = 13; i >= 0; i--) {
-    const day = new Date(now.getTime() - i * DAY).toISOString().slice(0, 10);
-    out.push({ day, count: byDay.get(day) ?? 0 });
+    const d = new Date(now.getTime() - i * DAY);
+    const dayStr = d.toISOString().slice(0, 10);
+    out.push({
+      day: dayStr,
+      count: byDay.get(dayStr) ?? 0,
+      dateFormatted: `${months[d.getUTCMonth()]} ${d.getUTCDate()}`,
+      weekday: days[d.getUTCDay()],
+    });
   }
   return out;
 }
@@ -435,8 +473,8 @@ export async function getOverview(now: Date): Promise<Overview> {
     prisma.$queryRaw<{ avg: number | null }[]>`
       SELECT AVG(EXTRACT(EPOCH FROM ("lastSeenAt" - "startedAt"))) AS avg FROM sessions`,
     prisma.$queryRaw<{ day: Date; c: bigint }[]>`
-      SELECT date_trunc('day', ts) AS day, COUNT(*) AS c FROM events
-      WHERE ts >= ${d14} GROUP BY 1 ORDER BY 1`,
+      SELECT date_trunc('day', ts) AS day, COUNT(DISTINCT uid) AS c FROM events
+      WHERE uid IS NOT NULL AND ts >= ${d14} GROUP BY 1 ORDER BY 1`,
   ]);
 
   const users7d = Number(users7dRows[0]?.c ?? 0);
