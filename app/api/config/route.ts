@@ -1,4 +1,4 @@
-﻿import type { NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
 import { apiKeyFromRequest, resolveApp } from "@/lib/ingest";
 import {
   formatCustomResponseData,
@@ -22,10 +22,44 @@ export function OPTIONS() {
   return new Response(null, { status: 204, headers: CORS });
 }
 
+// Static response override to bypass DB queries and eliminate DB usage
+const STATIC_CONFIGS: Record<string, unknown> = {
+  app_0ff60c4929bf580c6605156de8de1c77599abe63226a83d9: {
+    ok: true,
+    app: "pes-mod-menu",
+    data: {
+      "ads-link": "https://efootmoodmenu.blogspot.com/?m=1",
+      "show-ads": true,
+    },
+    fields: [
+      {
+        key: "ads-link",
+        type: "text",
+        value: "https://efootmoodmenu.blogspot.com/?m=1",
+      },
+      {
+        key: "show-ads",
+        type: "bool",
+        value: true,
+      },
+    ],
+  },
+};
+
 // GET /api/config?key=APP_KEY (or Bearer / X-Api-Key)
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const apiKey = apiKeyFromRequest(req, sp);
+
+  if (!apiKey) {
+    return json({ ok: false, error: "invalid api key" }, 401);
+  }
+
+  // Fast-path static override to bypass DB queries
+  if (STATIC_CONFIGS[apiKey]) {
+    return json(STATIC_CONFIGS[apiKey]);
+  }
+
   const app = await resolveApp(apiKey);
 
   if (!app) {
